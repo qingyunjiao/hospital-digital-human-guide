@@ -1,0 +1,18 @@
+# 前端临时文件
+frontend/.DS_Store
+frontend/*.log
+
+# 后端依赖
+backend/node_modules/
+backend/npm-debug.log
+backend/.env  # 若有环境变量文件，需单独创建并忽略
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器配置（可选）
+.idea/
+.vscode/
+*.swp
+*.swo
