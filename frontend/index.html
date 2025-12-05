@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>医院导诊屏数字人服务</title>
+    <style>
+        /* 按芯片型号适配尺寸：RK3566用720P，RK3588用1080P */
+        #digital-human-container {
+            width: 1280px;   /* RK3566建议值，RK3588改为1920px */
+            height: 720px;   /* RK3566建议值，RK3588改为1080px */
+            margin: 0 auto;
+            background: #f5f5f5;
+            overflow: hidden;
+        }
+        .guide-pic {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            border: 2px solid #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <!-- 数字人渲染容器 -->
+    <div id="digital-human-container"></div>
+
+    <!-- 引入官方SDK（必选，版本锁定为最新稳定版） -->
+    <script src="https://media.xingyun3d.com/xingyun3d/general/litesdk/xmovAvatar@latest.js"></script>
+    <!-- 引入设备工具函数 -->
+    <script src="device-utils.js"></script>
+
+    <script>
+        // 全局状态：标记语音播放状态（避免并发调用）
+        window.voicePlaying = false;
+        // 后端调度服务地址（替换为实际部署的后端IP）
+        const BACKEND_URL = "http://192.168.1.100:3000";
+        // 当前设备ID（每台设备唯一，如 hospital-screen-0 到 hospital-screen-19）
+        const DEVICE_ID = "hospital-screen-0";
+
+        // 初始化数字人SDK
+        async function initDigitalHumanSdk() {
+            try {
+                const sdkConfig = {
+                    containerId: '#digital-human-container',
+                    appId: 'YOUR_OFFICIAL_APPID',  // 替换为魔珐平台获取的appId
+                    appSecret: 'YOUR_OFFICIAL_APPSECRET',  // 替换为魔珐平台获取的appSecret
+                    gatewayServer: 'https://nebula-agent.xingyun3d.com/user/v1/ttsa/session',  // 官方固定地址
+                    enableLogger: false,  // 生产环境关闭日志
+
+                    // 处理Widget事件（展示科室图片等）
+                    proxyWidget: {
+                        "widget_pic": (data) => {
+                            console.log("加载导诊图片：", data.picUrl);
+                            // 释放旧图片资源，避免内存泄漏
+                            removeOldGuidePic();
+                            renderNewGuidePic(data.picUrl);
+                        }
+                    },
+
+                    // 监听数字人状态变化（用于内存调度）
+                    onStateChange: (state) => {
+                        console.log("数字人状态更新：", state);
+                        if (state === 'Idle') {
+                            // 空闲状态释放帧缓存（官方隐藏优化方法）
+                            if (window.digitalHumanSdk?.releaseFrameCache) {
+                                window.digitalHumanSdk.releaseFrameCache();
+                                console.log("已释放帧缓存，回收内存约50-80MB");
+                            }
+                            // 空闲时请求新任务
+                            requestNewTask();
+                        }
+                    },
+
+                    // 监听语音播放状态
+                    onVoiceStateChange: (status) => {
+                        window.voicePlaying = status === 'start';
+                        console.log(`语音状态：${status}（${window.voicePlaying ? '播放中' : '已结束'}）`);
+                    },
+
+                    // 错误处理（按官方错误码处理）
+                    onMessage: (message) => {
+                        if (message.type === 'error') {
+                            console.error(`SDK错误 [${message.code}]：${message.msg}`);
+                            handleSdkError(message.code);
+                        }
+                    }
+                };
+
+                // 创建SDK实例
+                const digitalHumanSdk = new XmovAvatar(sdkConfig);
+                window.digitalHumanSdk = digitalHumanSdk;
+                console.log("SDK初始化成功，等待导诊任务...");
+                return digitalHumanSdk;
+
+            } catch (error) {
+                console.error("SDK初始化失败：", error);
+                throw new Error("初始化数字人失败，请检查配置");
+            }
+        }
+
+        // 执行单个导诊任务
+        async function runSingleGuideTask(task) {
+            if (!window.digitalHumanSdk) {
+                console.error("SDK未初始化，无法执行任务");
+                return;
+            }
+
+            try {
+                // 等待前序任务完成
+                while (window.voicePlaying) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+
+                // 1. 播放导诊语音（支持SSML格式）
+                window.digitalHumanSdk.speak({
+                    text: `<speak>${task.content}</speak>`,
+                    isEnd: false
+                });
+
+                // 2. 展示科室图片（通过Widget事件）
+                if (task.picUrl) {
+                    window.digitalHumanSdk.triggerWidgetEvent({
+                        type: 'widget_pic',
+                        data: { picUrl: task.picUrl }
+                    });
+                }
+
+                // 3. 等待当前任务完成
+                await new Promise(resolve => {
+                    const checkComplete = setInterval(() => {
+                        if (!window.voicePlaying) {
+                            clearInterval(checkComplete);
+                            resolve();
+                        }
+                    }, 500);
+                });
+
+            } catch (error) {
+                console.error("执行导诊任务失败：", error);
+            }
+        }
+
+        // 从后端请求新任务
+        async function requestNewTask() {
+            try {
+                const res = await fetch(`${BACKEND_URL}/get-task?deviceId=${DEVICE_ID}`);
+                const data = await res.json();
+                if (data.code === 200 && data.task) {
+                    console.log("获取新导诊任务：", data.task.content);
+                    await runSingleGuideTask(data.task);
+                } else {
+                    console.log("无新任务或设备状态不允许：", data.msg);
+                }
+            } catch (error) {
+                console.error("请求任务失败：", error);
+            }
+        }
+
+        // 页面加载完成后初始化
+        window.onload = async function() {
+            try {
+                // 1. 初始化SDK
+                await initDigitalHumanSdk();
+                // 2. 启动设备状态上报（每30秒一次）
+                startStatusReport();
+                // 3. 3秒后请求第一个任务
+                setTimeout(requestNewTask, 3000);
+                // 4. 启动每日凌晨资源重置（稳定运行必备）
+                scheduleDailyReset();
+            } catch (error) {
+                console.error("启动失败：", error);
+                // 降级显示静态导诊图
+                document.querySelector('#digital-human-container').innerHTML = `
+                    <img src="https://your-server/hospital-guide-fallback.png" width="100%" height="100%" />
+                `;
+            }
+        };
+    </script>
+</body>
+</html>
