@@ -23,7 +23,7 @@
 ## 部署步骤
 
 ### 1. 获取魔珐星云SDK认证信息
-1. 登录 [魔珐星云平台](https://xingyun3d.com/)
+1. 登录 [魔珐星云平台]( https://xingyun3d.com?utm_campaign=daily&utm_source=jixinghuiKoc13 )
 2. 创建应用，选择数字人角色和语音
 3. 在应用详情中获取 `appId` 和 `appSecret`
 
