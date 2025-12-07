@@ -30,7 +30,7 @@
 ### 2. 部署后端调度服务
 ```bash
 # 克隆仓库
-git clone https://your-git-repo/hospital-digital-human-guide.git
+git clone https://github.com/qingyunjiao/hospital-digital-human-guide.git
 cd hospital-digital-human-guide/backend
 
 # 安装依赖
